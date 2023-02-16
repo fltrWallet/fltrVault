@@ -1678,6 +1678,29 @@ final class ManagerTests: XCTestCase {
         XCTAssertEqual(self.eventTestBuffer.count, 0)
     }
     
+    // We do not yet allow spending uncofirmed coins, meaning
+    // outputs that have not made it into a block yet
+    func testSpentPending() {
+        self.loadTestData01()
+        let pendingOutpoint = Tx.Outpoint(transactionId: Test.CoinTransactionId, index: 102)
+
+        guard let allCoinsBefore = try? self.manager._testingCoinRepo().wait().current.find(from: 0).wait()
+        else { XCTFail(); return }
+
+        let segwitTx = Tx.makeSegwitTx(for: pendingOutpoint)
+        // No error is thrown, however no state change is produced.
+        // Only update once the transaction is received/confirmed in a block.
+        XCTAssertNoThrow(try self.manager.spentUnconfirmed(outpoint: pendingOutpoint,
+                                                           height: 2_000,
+                                                           changeIndices: [],
+                                                           tx: segwitTx).wait())
+        guard let allCoinsAfter = try? self.manager._testingCoinRepo().wait().current.find(from: 0).wait()
+        else { XCTFail(); return }
+
+        XCTAssertEqual(allCoinsBefore, allCoinsAfter)
+        XCTAssertEqual(self.eventTestBuffer.count, 0)
+    }
+    
     func testPendingAmount() {
         self.loadTestData01()
 

@@ -160,9 +160,10 @@ extension Vault.CoinRepo {
     }
     
     public enum CoinRepoError: Swift.Error, Hashable {
-        case spentTwice
         case illegalStateSpent
         case illegalStateUnconfirmed
+        case spentTwice
+        case spentUnconfirmed
     }
 
     func append(_ row: HD.Coin) -> Future<Void> {
@@ -326,9 +327,13 @@ extension Vault.CoinRepo {
             case (.confirmed, .spent, .spent):
                 logger.info("CoinRepo \(#function) - Error: trying to spend coin [\(coin)] that is already spent")
                 throw CoinRepoError.spentTwice
-            case (.unconfirmed, _, _),
-                 (.rollback, _, _),
-                 (_, _, .unspent):
+            case (.unconfirmed, _, .pending):
+                logger.info("CoinRepo \(#function) - Error: trying to spend coin [\(coin)] that is in a pending state "
+                + "and still awaiting confirmation into a block")
+                throw CoinRepoError.spentUnconfirmed
+            case (.rollback, _, _),
+                (.unconfirmed, _, .spent),
+                (_, _, .unspent):
                 preconditionFailure()
             }
         }
@@ -341,7 +346,10 @@ extension Vault.CoinRepo {
         }
         .flatMapError {
             switch $0 {
-            case CoinRepoError.spentTwice:
+            case CoinRepoError.spentTwice,
+                CoinRepoError.spentUnconfirmed:
+                // Ignore these errors,
+                // could be due to other wallets with same seed sending transactions
                 return self.eventLoop.makeSucceededFuture(nil)
             default:
                 return self.eventLoop.makeFailedFuture($0)
