@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 import fltrECC
+import fltrECCAdapter
 import CryptoKit
 import fltrWAPI
 import Foundation
@@ -370,19 +371,61 @@ extension Point: Codable {
         case point
     }
     
+    enum LegacyCodingKeys: String, CodingKey {
+        case data
+    }
+
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(DSA.PublicKey(self).serialize(), forKey: .point)
     }
-    
+
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let serialized = try container.decode([UInt8].self, forKey: .point)
-        self = .init(from: serialized)!
+        do {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let serialized = try container.decode([UInt8].self, forKey: .point)
+            self = .init(from: serialized)!
+        } catch {
+            let container = try decoder.container(keyedBy: LegacyCodingKeys.self)
+            let serialized = try container.decode([UInt8].self, forKey: .data)
+            let compressed = C.compressed(point: serialized)
+            self = .init(from: compressed)!
+        }
     }
 }
 
-extension BIP32.NeuteredExtendedKey: Codable {}
+extension BIP32.NeuteredExtendedKey: Codable {
+    struct Legacy: Codable {
+        let `public`: Point
+        let chainCode: [UInt8]
+
+        enum CodingKeys: String, CodingKey {
+            case `public`
+            case chainCode
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let copy = decoder
+        do {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let point = try container.decode(Point.self, forKey: .public)
+            let chainCode = try container.decode(ChainCode.self, forKey: .chainCode)
+            self = .init(public: point, chainCode: chainCode)
+        } catch {
+            let container = try copy.container(keyedBy: Legacy.CodingKeys.self)
+            let point = try container.decode(Point.self, forKey: .public)
+            let bytes = try container.decode([UInt8].self, forKey: .chainCode)
+            let chainCode = ChainCode(unsafeUninitializedCapacity: 32) { chainCode, size in
+                (0..<32).forEach {
+                    chainCode[$0] = bytes[$0]
+                }
+                size = 32
+            }
+            self = .init(public: point, chainCode: chainCode)
+        }
+    }
+}
 
 extension BIP32.PrivateExtendedKey: Codable {
     public enum CodingKeys: String, CodingKey {
